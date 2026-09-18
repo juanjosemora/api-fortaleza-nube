@@ -1,0 +1,53 @@
+# ---------------------------------------------------------
+# docker-compose.yml
+# Fase 3: Orquestación y Enrutamiento
+# Fase 4: Trazabilidad (Uptime Kuma monitorea /, Dozzle lee los logs)
+#
+# Los tres servicios comparten la red interna "fortaleza-net"
+# (tipo bridge) para poder verse entre sí por nombre de servicio.
+# Nginx Proxy Manager (NPM) se configura aparte (ver GUIA-DESPLIEGUE.md)
+# y se conecta a esta misma red para poder enrutar hacia "api",
+# "uptime-kuma" y "dozzle" por su nombre.
+# ---------------------------------------------------------
+
+services:
+  api:
+    build: .
+    container_name: api-fortaleza-nube
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+    # No se publica el puerto al host: NPM llega a él por la red interna.
+    expose:
+      - "8080"
+    networks:
+      - fortaleza-net
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    expose:
+      - "3001"
+    networks:
+      - fortaleza-net
+
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "8080"
+    networks:
+      - fortaleza-net
+
+networks:
+  fortaleza-net:
+    driver: bridge
+
+volumes:
+  uptime-kuma-data:

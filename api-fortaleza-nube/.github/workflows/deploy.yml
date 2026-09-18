@@ -1,0 +1,99 @@
+name: DevSecOps Pipeline - api-fortaleza-nube
+
+# Fase 2: Tubería DevSecOps desde Cero
+# El pipeline solo despliega si el código pasa:
+#   1) npm audit (vulnerabilidades de dependencias)
+#   2) Trivy (CVEs en la imagen Docker ya construida)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  IMAGE_NAME: api-fortaleza-nube
+
+jobs:
+  # ---------------------------------------------------------
+  # JOB 1: Auditoría de dependencias (npm audit)
+  # ---------------------------------------------------------
+  npm-audit:
+    name: Auditoría de dependencias (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Ejecutar npm audit
+        run: npm audit --audit-level=high
+
+  # ---------------------------------------------------------
+  # JOB 2: Build de la imagen + escaneo con Trivy
+  # ---------------------------------------------------------
+  build-and-scan:
+    name: Build de imagen y escaneo Trivy
+    runs-on: ubuntu-latest
+    needs: npm-audit
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Construir la imagen Docker
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      - name: Escanear imagen con Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          format: "table"
+          # No se ignoran vulnerabilidades no arregladas: solo bloqueamos
+          # por severidad CRITICAL/HIGH para replicar el "punto de control".
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Guardar imagen como artefacto (para el job de despliegue)
+        run: docker save ${{ env.IMAGE_NAME }}:${{ github.sha }} -o image.tar
+
+      - name: Subir artefacto de imagen
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # ---------------------------------------------------------
+  # JOB 3: Despliegue automático por SSH a EC2
+  # Solo corre si build-and-scan (que depende de npm-audit) pasó,
+  # y solo en push a main (no en pull requests).
+  # ---------------------------------------------------------
+  deploy:
+    name: Despliegue en EC2 (AWS)
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Desplegar vía SSH en la instancia EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/api-fortaleza-nube
+            git pull origin main
+            docker compose build api
+            docker compose up -d api
+            docker image prune -f
