@@ -3,6 +3,7 @@
 # Fase 1: Análisis y Contenerización Segura
 # Buenas prácticas de Hardening aplicadas:
 #   - Imagen base ligera (alpine)
+#   - Paquetes del sistema actualizados (corrige CVEs de OpenSSL)
 #   - Directorio de trabajo dedicado (WORKDIR)
 #   - Usuario sin privilegios (USER node) para evitar root
 #   - Instalación reproducible con npm ci
@@ -10,6 +11,10 @@
 # ---------------------------------------------------------
 
 FROM node:20-alpine
+
+# Actualizamos los paquetes del sistema base (corrige CVEs conocidos
+# en libcrypto3/libssl3 detectados por el escaneo de Trivy)
+RUN apk update && apk upgrade --no-cache
 
 # Directorio de trabajo dentro del contenedor
 WORKDIR /usr/src/app
